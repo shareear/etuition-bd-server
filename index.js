@@ -306,6 +306,46 @@ async function run() {
             res.send(expenses);
         });
 
+        // --- UNIFIED ONGOING JOBS FETCH ---
+        app.get('/ongoing-tuitions/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            const role = req.query.role; // Pass role from frontend
+            
+            if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
+
+            let query = { status: 'paid' };
+            if (role === 'tutor') {
+                query.tutorEmail = email;
+            } else {
+                query.studentEmail = email;
+            }
+
+            const result = await appicationsCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        // --- TERMINATE CONTRACT & NOTIFY ---
+        app.delete('/terminate-contract/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const { tutorEmail, studentEmail, subject } = req.body;
+
+            const query = { _id: new ObjectId(id) };
+            const deleteResult = await appicationsCollection.deleteOne(query);
+
+            if (deleteResult.deletedCount > 0) {
+                // Log notification in a collection (Optional: you can create a 'notifications' collection)
+                const notification = {
+                    receiverEmail: tutorEmail,
+                    senderEmail: studentEmail,
+                    message: `Contract for ${subject} was terminated by the student.`,
+                    type: 'termination',
+                    date: new Date()
+                };
+                await db.collection("notifications").insertOne(notification);
+            }
+            res.send(deleteResult);
+        });
+
         // --- STRIPE & PAYMENTS ---
         app.post("/create-payment-intent", verifyToken, async (req, res) => {
             try {
