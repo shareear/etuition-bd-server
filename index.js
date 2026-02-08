@@ -202,9 +202,13 @@ async function run(){
         // --- TUTOR ANALYTICS & ONGOING ---
         app.get('/tutor-ongoing/:email', async (req, res) => {
             const email = req.params.email;
-            // A job is ongoing only if it is paid
-            const result = await appicationsCollection.find({ tutorEmail: email, status: 'paid' }).toArray();
-            res.send(result);
+            const query = { tutorEmail: email, status: { $in: ["Accepted", "Running"] } };
+            try {
+                const result = await appicationsCollection.find(query).toArray();
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: "Failed to fetch ongoing tuitions", error: error.message });
+            }
         });
 
         app.get('/tutor-revenue/:email', async (req, res) => {
@@ -254,9 +258,13 @@ async function run(){
         // --- CANCEL/DELETE TUITION ---
         app.delete('/cancel-tuition/:id', async (req, res) => {
             const id = req.params.id;
-            const query = { _id: new ObjectId(id) };
-            const result = await appicationsCollection.deleteOne(query);
-            res.send(result);
+            const filter = { _id: new ObjectId(id) };
+            try {
+                const result = await appicationsCollection.deleteOne(filter);
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: "Failed to cancel tuition", error: error.message });
+            }
         });
 
         await client.db("admin").command({ping: 1});
