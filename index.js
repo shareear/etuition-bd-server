@@ -294,6 +294,18 @@ async function run() {
             res.send(result);
         });
 
+        // --- STUDENT EXPENSE HISTORY API ---
+        app.get('/student-expenses/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            const query = { studentEmail: email };
+            // Fetch all payments made by this student
+            const expenses = await paymentsCollection.find(query).sort({ date: -1 }).toArray();
+            res.send(expenses);
+        });
+
         // --- STRIPE & PAYMENTS ---
         app.post("/create-payment-intent", verifyToken, async (req, res) => {
             try {
