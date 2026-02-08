@@ -92,8 +92,15 @@ async function run() {
         });
 
         // --- USERS & ROLE API ---
-        app.get('/users', verifyToken, async (req, res) => {
+        app.get('/users', async (req, res) => {
             const result = await usersCollectin.find().toArray();
+            res.send(result);
+        });
+
+        app.get('/users/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await usersCollectin.findOne(query);
             res.send(result);
         });
 
@@ -157,7 +164,55 @@ async function run() {
             res.send(result);
         });
 
-        // --- TUITION MANAGEMENT (USER SIDE) ---
+        // --- ADD THIS TO YOUR SERVER.JS ---
+        app.post('/hiring-requests', verifyToken, async (req, res) => {
+            const application = req.body;
+            // Uses your specific collection name with the typo 'appicationsCollection'
+            const result = await appicationsCollection.insertOne(application);
+            res.send(result);
+        });
+
+        // Add this to your backend server.js inside run()
+        app.get('/hiring-requests-by-tutor/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            const query = { tutorEmail: email }; // Specifically look for the tutor's email
+            const result = await appicationsCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        // server.js inside run()
+        app.patch('/applications/status/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const status = req.body.status;
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = {
+                $set: { status: status },
+            };
+            // Note: using 'appicationsCollection' to match your existing typo
+            const result = await appicationsCollection.updateOne(filter, updateDoc);
+            res.send(result);
+        });
+
+        // Add this to your server.js inside the run() function
+        app.delete('/applications/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await appicationsCollection.deleteOne(query);
+            res.send(result);
+        });
+
+        // --- HIRING REQUESTS BY STUDENT EMAIL ---
+        app.get('/hiring-requests-by-student/:email', async (req, res) => {
+            const email = req.params.email;
+            const query = { studentEmail: email };
+            const result = await appicationsCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        // --- TUITION MANAGEMENT (USER SIDE - APPLICATIONS) ---
         app.delete('/cancel-tuition/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const result = await appicationsCollection.deleteOne({ _id: new ObjectId(id) });
@@ -175,7 +230,7 @@ async function run() {
             res.send(result);
         });
 
-        // --- TUITIONS API ---
+        // --- TUITIONS CORE API ---
         app.get('/tuitions', async (req, res) => {
             const email = req.query.email;
             let query = email ? { studentEmail: email } : { status: 'approved' };
@@ -183,7 +238,6 @@ async function run() {
             res.send(result);
         });
 
-        // --- NEW: GET SINGLE TUITION BY ID (FIX FOR DETAILS PAGE) ---
         app.get('/tuition/:id', async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
@@ -196,30 +250,67 @@ async function run() {
             res.send(result);
         });
 
+        // --- FIXED: TUITION POST DELETE & UPDATE (FOR MY POSTS PAGE) ---
+        app.delete('/tuitions/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await tutionsCollection.deleteOne(query);
+            res.send(result);
+        });
+
+        app.patch('/tuitions/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) };
+            const updatedDoc = {
+                $set: {
+                    subject: req.body.subject,
+                    class: req.body.class,
+                    salary: parseFloat(req.body.salary),
+                    location: req.body.location
+                }
+            };
+            const result = await tutionsCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        });
+
         // --- STRIPE & PAYMENTS ---
         app.post("/create-payment-intent", verifyToken, async (req, res) => {
-            const { salary } = req.body;
-            const amount = Math.round(parseFloat(salary) * 100);
-            if (!amount || amount < 1) return res.status(400).send({ message: "Invalid amount" });
+            try {
+                const { salary } = req.body;
+                const amount = Math.round(parseFloat(salary) * 100);
+                if (!amount || amount < 1) return res.status(400).send({ message: "Invalid amount" });
 
-            const paymentIntent = await stripe.paymentIntents.create({
-                amount: amount,
-                currency: "usd",
-                payment_method_types: ["card"],
-            });
-            res.send({ clientSecret: paymentIntent.client_secret });
+                const paymentIntent = await stripe.paymentIntents.create({
+                    amount: amount,
+                    currency: "usd",
+                    payment_method_types: ["card"],
+                });
+                res.send({ clientSecret: paymentIntent.client_secret });
+            } catch (error) {
+                console.error("Payment Intent Error:", error);
+                res.status(500).send({ message: "Failed to create payment intent" });
+            }
         });
 
         app.post("/payments", verifyToken, async (req, res) => {
-            const payment = req.body;
-            const paymentResult = await paymentsCollection.insertOne(payment);
-            const query = { _id: new ObjectId(payment.appId) };
-            const updateDoc = { $set: { status: "paid" } };
-            const updateResult = await appicationsCollection.updateOne(query, updateDoc);
-            res.send({ paymentResult, updateResult });
+            try {
+                const payment = req.body;
+                const paymentResult = await paymentsCollection.insertOne(payment);
+                
+                if (payment.appId) {
+                    const query = { _id: new ObjectId(payment.appId) };
+                    const updateDoc = { $set: { status: "paid" } };
+                    await appicationsCollection.updateOne(query, updateDoc);
+                }
+                
+                res.send({ paymentResult });
+            } catch (error) {
+                console.error("Payment Save Error:", error);
+                res.status(500).send({ message: "Failed to save payment" });
+            }
         });
 
-        console.log("🚀 MongoDB Connected & Routes Secured");
+        console.log("🚀 MongoDB Connected & Routes Fully Secured");
     } finally { }
 }
 run().catch(console.dir);
