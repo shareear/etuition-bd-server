@@ -178,9 +178,16 @@ async function run() {
         // --- TUITIONS API ---
         app.get('/tuitions', async (req, res) => {
             const email = req.query.email;
-            // Only show approved tuitions on the public/student list unless filtered by email
             let query = email ? { studentEmail: email } : { status: 'approved' };
             const result = await tutionsCollection.find(query).sort({ postedDate: -1 }).toArray();
+            res.send(result);
+        });
+
+        // --- NEW: GET SINGLE TUITION BY ID (FIX FOR DETAILS PAGE) ---
+        app.get('/tuition/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await tutionsCollection.findOne(query);
             res.send(result);
         });
 
