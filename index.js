@@ -324,6 +324,22 @@ async function run() {
             res.send(result);
         });
 
+        app.get('/admin/analytics', verifyToken, async (req, res) => {
+            const totalUsers = await usersCollectin.countDocuments();
+            const payments = await paymentsCollection.find().toArray();
+            
+            // Calculate platform revenue: 10% from Student + 10% from Tutor = 20% total per transaction
+            const totalVolume = payments.reduce((sum, p) => sum + parseFloat(p.salary || 0), 0);
+            const platformRevenue = totalVolume * 0.20; 
+
+            res.send({
+                totalUsers,
+                totalVolume,
+                platformRevenue,
+                payments
+            });
+        });
+
         // --- TERMINATE CONTRACT & NOTIFY ---
         app.delete('/terminate-contract/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
