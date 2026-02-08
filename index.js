@@ -11,7 +11,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- FIREBASE ADMIN SETUP (With Error Handling) ---
+// --- FIREBASE ADMIN SETUP ---
 try {
     const decoded = Buffer.from(process.env.FIREBASE_SERVICE_KEY, "base64").toString("utf-8");
     const serviceAccount = JSON.parse(decoded);
@@ -29,12 +29,12 @@ try {
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader) {
-        return res.status(401).send({ message: 'Unauthorized access: No token provided' });
+        return res.status(401).send({ message: 'unauthorized access' });
     }
     const token = authHeader.split(' ')[1];
     jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
         if (err) {
-            return res.status(401).send({ message: 'Unauthorized access: Invalid token' });
+            return res.status(401).send({ message: 'unauthorized access' });
         }
         req.decoded = decoded;
         next();
@@ -58,18 +58,30 @@ async function run() {
 
         // --- AUTH/JWT API ---
         app.post('/jwt', async (req, res) => {
-            try {
-                const user = req.body;
-                if (!user.email) return res.status(400).send({ message: "Email required" });
-                
-                const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
-                res.send({ token });
-            } catch (error) {
-                res.status(500).send({ message: "JWT generation failed" });
-            }
+            const user = req.body;
+            const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
+            res.send({ token });
         });
 
-        // --- USERS API ---
+        // --- USER STATS API (Fixes 404 Error) ---
+        app.get('/user-stats/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            // প্রোফাইলের জন্য প্রয়োজনীয় স্ট্যাটাস হিসেব করা
+            const myTuitionsCount = await tutionsCollection.countDocuments({ studentEmail: email });
+            const myApplicationsCount = await appicationsCollection.countDocuments({ tutorEmail: email });
+            const myPayments = await paymentsCollection.find({ email: email }).toArray();
+            
+            res.send({
+                tuitions: myTuitionsCount,
+                applications: myApplicationsCount,
+                totalPaid: myPayments.length
+            });
+        });
+
+        // --- USERS & ROLE API ---
         app.get('/users/role/:email', async (req, res) => {
             const email = req.params.email;
             if (email === "admin@etuition.com") return res.send({ role: "admin" });
@@ -79,60 +91,69 @@ async function run() {
 
         app.post('/users', async (req, res) => {
             const newUser = req.body;
-            const existingUser = await usersCollectin.findOne({ email: newUser.email });
-            if (existingUser) return res.send({ message: 'User exists' });
+            const query = { email: newUser.email };
+            const existingUser = await usersCollectin.findOne(query);
+            if (existingUser) return res.send({ message: 'user already exists', insertedId: null });
             const result = await usersCollectin.insertOne(newUser);
             res.send(result);
         });
 
-        // --- PROTECTED DASHBOARD DATA (Sensitive) ---
+        // --- APPLICATIONS / HIRING REQUESTS (Protected) ---
         app.get('/hiring-requests/:email', verifyToken, async (req, res) => {
-            // সিকিউরিটি চেক: ইমেইল ম্যাচ করে কি না
-            if (req.params.email !== req.decoded.email) {
-                return res.status(403).send({ message: 'Forbidden access' });
+            const email = req.params.email;
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' });
             }
-            const result = await appicationsCollection.find({ tutorEmail: req.params.email }).sort({ appliedDate: -1 }).toArray();
+            const result = await appicationsCollection.find({ tutorEmail: email }).sort({ appliedDate: -1 }).toArray();
             res.send(result);
         });
 
         app.get('/hiring-requests-by-student/:email', verifyToken, async (req, res) => {
-            if (req.params.email !== req.decoded.email) {
-                return res.status(403).send({ message: 'Forbidden access' });
+            const email = req.params.email;
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' });
             }
-            const result = await appicationsCollection.find({ studentEmail: req.params.email }).sort({ appliedDate: -1 }).toArray();
+            const result = await appicationsCollection.find({ studentEmail: email }).sort({ appliedDate: -1 }).toArray();
             res.send(result);
         });
 
-        // --- STRIPE PAYMENT INTENT ---
-        app.post("/create-payment-intent", verifyToken, async (req, res) => {
-            const { salary } = req.body;
-            if (!salary || isNaN(parseFloat(salary))) return res.status(400).send({ message: "Invalid Salary" });
-
-            const amount = Math.round(parseFloat(salary) * 100);
-            try {
-                const paymentIntent = await stripe.paymentIntents.create({
-                    amount: amount,
-                    currency: "usd",
-                    payment_method_types: ["card"],
-                });
-                res.send({ clientSecret: paymentIntent.client_secret });
-            } catch (error) {
-                res.status(500).send({ error: error.message });
-            }
+        // --- TUITIONS API ---
+        app.get('/tuitions', async (req, res) => {
+            const email = req.query.email;
+            let query = email ? { studentEmail: email } : {};
+            const result = await tutionsCollection.find(query).sort({ postedDate: -1 }).toArray();
+            res.send(result);
         });
 
-        // --- REMAINING APIS (Simplified for brevity but protected) ---
+        app.post('/tuitions', verifyToken, async (req, res) => {
+            const result = await tutionsCollection.insertOne(req.body);
+            res.send(result);
+        });
+
+        // --- STRIPE & PAYMENTS ---
+        app.post("/create-payment-intent", verifyToken, async (req, res) => {
+            const { salary } = req.body;
+            const amount = Math.round(parseFloat(salary) * 100);
+            if (!amount || amount < 1) return res.status(400).send({ message: "Invalid amount" });
+
+            const paymentIntent = await stripe.paymentIntents.create({
+                amount: amount,
+                currency: "usd",
+                payment_method_types: ["card"],
+            });
+            res.send({ clientSecret: paymentIntent.client_secret });
+        });
+
         app.post("/payments", verifyToken, async (req, res) => {
             const payment = req.body;
             const paymentResult = await paymentsCollection.insertOne(payment);
-            const updateResult = await appicationsCollection.updateOne(
-                { _id: new ObjectId(payment.appId) },
-                { $set: { status: "paid" } }
-            );
+            const query = { _id: new ObjectId(payment.appId) };
+            const updateDoc = { $set: { status: "paid" } };
+            const updateResult = await appicationsCollection.updateOne(query, updateDoc);
             res.send({ paymentResult, updateResult });
         });
 
-        console.log("🚀 Server Connected to MongoDB");
+        console.log("🚀 MongoDB Connected & Routes Secured");
     } finally { }
 }
 run().catch(console.dir);
