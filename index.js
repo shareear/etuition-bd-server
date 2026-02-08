@@ -23,12 +23,14 @@ const client = new MongoClient(uri, {
 });
 
 // firebase admin setup:
-const serviceAccount = require("./etuition-bd-firebase-sdk.json");
+const decoded = Buffer.from(process.env.FIREBASE_SERVICE_KEY, "base64").toString("utf-8");
+const serviceAccount = JSON.parse(decoded);
 if (!admin.apps.length) {
     admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
     });
 }
+
 
 async function run(){
     try{
