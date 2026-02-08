@@ -324,6 +324,30 @@ async function run(){
             }
         });
 
+        // Endpoint to fetch student profile
+        app.get('/student-profile/:id', async (req, res) => {
+            const id = req.params.id;
+            try {
+                const student = await usersCollectin.findOne({ _id: new ObjectId(id), role: 'student' });
+                if (!student) return res.status(404).send({ message: "Student not found" });
+                res.send(student);
+            } catch (error) {
+                res.status(500).send({ message: "Failed to fetch student profile", error: error.message });
+            }
+        });
+
+        // Endpoint to fetch tutor profile
+        app.get('/tutor-profile/:id', async (req, res) => {
+            const id = req.params.id;
+            try {
+                const tutor = await usersCollectin.findOne({ _id: new ObjectId(id), role: 'tutor' });
+                if (!tutor) return res.status(404).send({ message: "Tutor not found" });
+                res.send(tutor);
+            } catch (error) {
+                res.status(500).send({ message: "Failed to fetch tutor profile", error: error.message });
+            }
+        });
+
         await client.db("admin").command({ping: 1});
         console.log("MongoDB Connected and Ready!");
     } finally{}
