@@ -144,8 +144,6 @@ async function run(){
             }
             application.status = 'Pending';
             application.appliedDate = new Date().toISOString();
-            application.subject = application.subject || "Not Specified"; // Ensure subject is always set
-            application.salary = parseFloat(application.salary) || 0; // Ensure salary is a valid number
             const result = await appicationsCollection.insertOne(application);
             res.send(result);
         });
