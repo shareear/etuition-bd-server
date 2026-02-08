@@ -129,6 +129,25 @@ async function run() {
             res.send(result);
         });
 
+        // --- ADMIN: MANAGE TUITIONS (PENDING FETCH) ---
+        app.get('/admin/pending-tuitions', verifyToken, async (req, res) => {
+            const query = { status: 'pending' };
+            const result = await tutionsCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        // --- ADMIN: UPDATE TUITION STATUS (APPROVE/REJECT) ---
+        app.patch('/tuitions/status/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const status = req.body.status;
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = {
+                $set: { status: status },
+            };
+            const result = await tutionsCollection.updateOne(filter, updateDoc);
+            res.send(result);
+        });
+
         // --- TUTOR ONGOING JOBS ---
         app.get('/tutor-ongoing/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
@@ -138,7 +157,7 @@ async function run() {
             res.send(result);
         });
 
-        // --- TUITION MANAGEMENT ---
+        // --- TUITION MANAGEMENT (USER SIDE) ---
         app.delete('/cancel-tuition/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const result = await appicationsCollection.deleteOne({ _id: new ObjectId(id) });
@@ -159,7 +178,8 @@ async function run() {
         // --- TUITIONS API ---
         app.get('/tuitions', async (req, res) => {
             const email = req.query.email;
-            let query = email ? { studentEmail: email } : {};
+            // Only show approved tuitions on the public/student list unless filtered by email
+            let query = email ? { studentEmail: email } : { status: 'approved' };
             const result = await tutionsCollection.find(query).sort({ postedDate: -1 }).toArray();
             res.send(result);
         });
