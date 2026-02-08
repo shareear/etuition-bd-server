@@ -348,8 +348,8 @@ async function run(){
             }
         });
 
-        await client.db("admin").command({ping: 1});
-        console.log("MongoDB Connected and Ready!");
+        // await client.db("admin").command({ping: 1});
+        // console.log("MongoDB Connected and Ready!");
     } finally{}
 }
 
