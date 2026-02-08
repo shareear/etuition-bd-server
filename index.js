@@ -1,6 +1,7 @@
 const express = require('express');
 const admin = require("firebase-admin");
 const cors = require('cors');
+const jwt = require('jsonwebtoken'); // Added JWT
 const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config();
@@ -11,18 +12,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// MONGO Connections start:
-const uri = process.env.MONGO_URI;
-
-const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  }
-});
-
-// firebase admin setup:
+// --- FIREBASE ADMIN SETUP ---
 const decoded = Buffer.from(process.env.FIREBASE_SERVICE_KEY, "base64").toString("utf-8");
 const serviceAccount = JSON.parse(decoded);
 if (!admin.apps.length) {
@@ -31,6 +21,26 @@ if (!admin.apps.length) {
     });
 }
 
+// --- JWT & AUTH MIDDLEWARE ---
+const verifyToken = (req, res, next) => {
+    if (!req.headers.authorization) {
+        return res.status(401).send({ message: 'unauthorized access' });
+    }
+    const token = req.headers.authorization.split(' ')[1];
+    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+        if (err) {
+            return res.status(401).send({ message: 'unauthorized access' });
+        }
+        req.decoded = decoded;
+        next();
+    });
+};
+
+// MONGO Connections start:
+const uri = process.env.MONGO_URI;
+const client = new MongoClient(uri, {
+  serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true }
+});
 
 async function run(){
     try{
@@ -42,17 +52,22 @@ async function run(){
         const appicationsCollection = db.collection("applications");
         const paymentsCollection = db.collection("payments");
 
+        // --- AUTH/JWT API ---
+        app.post('/jwt', async (req, res) => {
+            const user = req.body;
+            const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
+            res.send({ token });
+        });
+
         // --- USERS & ADMIN MANAGEMENT API ---
-        app.get('/users', async(req, res)=>{
+        app.get('/users', verifyToken, async(req, res)=>{
             const result = await usersCollectin.find().toArray();
             res.send(result);
         });
 
         app.get('/users/role/:email', async(req, res)=>{
             const email = req.params.email;
-            if(email === "admin@etuition.com"){
-                return res.send({role: "admin"});
-            };
+            if(email === "admin@etuition.com") return res.send({role: "admin"});
             const user = await usersCollectin.findOne({email: email});
             res.send({role: user?.role || 'student'});
         });
@@ -61,14 +76,12 @@ async function run(){
             const newUser = req.body;
             const query = {email: newUser.email}
             const existingUser = await usersCollectin.findOne(query);
-            if(existingUser){
-                return res.send({message: 'user already exists', insertedId: null});
-            };
+            if(existingUser) return res.send({message: 'user already exists', insertedId: null});
             const result = await usersCollectin.insertOne(newUser);
             res.send(result);
         });
 
-        app.patch('/users/role/:id', async (req, res) => {
+        app.patch('/users/role/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const { role } = req.body;
             const filter = { _id: new ObjectId(id) };
@@ -77,109 +90,68 @@ async function run(){
             res.send(result);
         });
 
-        app.delete('/users/:id', async (req, res) => {
-            const id = req.params.id;
-            const query = { _id: new ObjectId(id) };
-            const result = await usersCollectin.deleteOne(query);
+        app.delete('/users/:id', verifyToken, async (req, res) => {
+            const result = await usersCollectin.deleteOne({ _id: new ObjectId(req.params.id) });
             res.send(result);
         });
 
-
         // --- TUITIONS API ---
         app.get('/tuitions', async(req, res)=>{
-            try {
-                const email = req.query.email;
-                let query = {};
-                if(email) query = { studentEmail: email };
-                const result = await tutionsCollection.find(query).sort({ postedDate: -1 }).toArray();
-                res.send(result);
-            } catch (error) {
-                res.status(500).send({ message: "Internal Server Error" });
-            }
+            const email = req.query.email;
+            let query = email ? { studentEmail: email } : {};
+            const result = await tutionsCollection.find(query).sort({ postedDate: -1 }).toArray();
+            res.send(result);
         });
 
-        app.get('/admin/pending-tuitions', async (req, res) => {
-            try {
-                const query = { status: 'pending' };
-                const result = await tutionsCollection.find(query).toArray();
-                res.send(result);
-            } catch (error) {
-                res.status(500).send({ message: "Server error" });
-            }
-        });
-
-        app.get('/tuition/:id', async (req, res) => {
-            try {
-                const id = req.params.id;
-                if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid ID" });
-                const result = await tutionsCollection.findOne({ _id: new ObjectId(id) });
-                res.send(result);
-            } catch (error) {
-                res.status(500).send({ message: "Server error" });
-            }
-        });
-
-        app.post('/tuitions', async(req, res)=>{
+        app.post('/tuitions', verifyToken, async(req, res)=>{
             const newTuition = req.body;
             newTuition.status = 'pending';
             const result = await tutionsCollection.insertOne(newTuition);
             res.send(result);
         });
 
-        app.patch('/tuitions/status/:id', async(req, res)=>{
-            const id = req.params.id;
-            const {status} = req.body;
-            const filter= {_id: new ObjectId(id)};
-            const updateDoc = { $set: {status: status} };
-            const result = await tutionsCollection.updateOne(filter, updateDoc);
-            res.send(result);
-        });
-
-
         // --- APPLICATION API ---
-        app.post('/applications', async (req, res) => {
+        app.post('/applications', verifyToken, async (req, res) => {
             const application = req.body;
-            const query = { tutorEmail: application.tutorEmail, studentEmail: application.studentEmail };
-            const alreadyApplied = await appicationsCollection.findOne(query);
-            if (alreadyApplied) {
-                return res.status(400).send({ message: 'You have already sent a request to this tutor!', insertedId: null });
+            
+            // Critical Fix: Ensure subject and salary are saved from the job data
+            if(!application.subject || !application.salary) {
+                return res.status(400).send({ message: "Subject or Salary missing!" });
             }
+
+            const query = { tutorEmail: application.tutorEmail, studentEmail: application.studentEmail, subject: application.subject };
+            const alreadyApplied = await appicationsCollection.findOne(query);
+            if (alreadyApplied) return res.status(400).send({ message: 'Already applied' });
+
             application.status = 'Pending';
             application.appliedDate = new Date().toISOString();
             const result = await appicationsCollection.insertOne(application);
             res.send(result);
         });
 
-        // 1. New Route for Students to see their specific requests
-        app.get('/hiring-requests-by-student/:email', async (req, res) => {
-            const email = req.params.email;
-            const query = { studentEmail: email };
-            const result = await appicationsCollection.find(query).sort({ appliedDate: -1 }).toArray();
+        app.get('/hiring-requests/:email', verifyToken, async (req, res) => {
+            const result = await appicationsCollection.find({ tutorEmail: req.params.email }).sort({ appliedDate: -1 }).toArray();
             res.send(result);
         });
 
-        app.get('/hiring-requests/:email', async (req, res) => {
-            const email = req.params.email;
-            const query = { tutorEmail: email };
-            const result = await appicationsCollection.find(query).sort({ appliedDate: -1 }).toArray();
+        app.get('/hiring-requests-by-student/:email', verifyToken, async (req, res) => {
+            const result = await appicationsCollection.find({ studentEmail: req.params.email }).sort({ appliedDate: -1 }).toArray();
             res.send(result);
         });
 
-        app.patch('/hiring-requests/status/:id', async (req, res) => {
-            const id = req.params.id;
-            const { status } = req.body;
-            const filter = { _id: new ObjectId(id) };
-            const updateDoc = { $set: { status: status } };
-            const result = await appicationsCollection.updateOne(filter, updateDoc);
+        app.patch('/hiring-requests/status/:id', verifyToken, async (req, res) => {
+            const result = await appicationsCollection.updateOne(
+                { _id: new ObjectId(req.params.id) }, 
+                { $set: { status: req.body.status } }
+            );
             res.send(result);
         });
 
-
-        // --- PAYMENT & STRIPE ---
-        app.post("/create-payment-intent", async (req, res) => {
+        // --- PAYMENT & STRIPE (SENSITIVE) ---
+        app.post("/create-payment-intent", verifyToken, async (req, res) => {
             const { salary } = req.body;
-            if (!salary) return res.status(400).send({ message: "Salary missing" });
-            const amount = parseInt(parseFloat(salary) * 100);
+            if (!salary || salary === "Negotiable") return res.status(400).send({ message: "Invalid amount" });
+            const amount = Math.round(parseFloat(salary) * 100);
             try {
                 const paymentIntent = await stripe.paymentIntents.create({
                     amount: amount, currency: "usd", payment_method_types: ["card"],
@@ -190,168 +162,31 @@ async function run(){
             }
         });
 
-        // Updated Payment Route to set status as 'paid'
-        app.post("/payments", async (req, res) => {
+        app.post("/payments", verifyToken, async (req, res) => {
             const payment = req.body;
             const paymentResult = await paymentsCollection.insertOne(payment);
             const filter = { _id: new ObjectId(payment.appId) };
-            const updateDoc = { $set: { status: "paid" } }; // Status becomes 'paid' after transaction
-            const updateResult = await appicationsCollection.updateOne(filter, updateDoc);
+            const updateResult = await appicationsCollection.updateOne(filter, { $set: { status: "paid" } });
             res.send({ paymentResult, updateResult });
         });
 
-
-        // --- TUTOR ANALYTICS & ONGOING ---
-        app.get('/tutor-ongoing/:email', async (req, res) => {
-            const email = req.params.email;
-            const query = { tutorEmail: email, status: { $in: ["Accepted", "Running"] } };
-            try {
-                const result = await appicationsCollection.find(query).toArray();
-                res.send(result);
-            } catch (error) {
-                res.status(500).send({ message: "Failed to fetch ongoing tuitions", error: error.message });
-            }
+        // --- CANCEL/DELETE ---
+        app.delete('/cancel-tuition/:id', verifyToken, async (req, res) => {
+            const result = await appicationsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+            res.send(result);
         });
 
-        app.get('/tutor-revenue/:email', async (req, res) => {
-            const email = req.params.email;
-            const payments = await paymentsCollection.find({ tutorEmail: email }).toArray();
-            const totalRevenue = payments.reduce((sum, p) => sum + parseFloat(p.salary || 0), 0);
-            res.send({ totalRevenue, payments });
-        });
-
-
-        // --- ANALYTICS & STATS ---
-        app.get('/admin/analytics', async (req, res) => {
-            const payments = await paymentsCollection.find().toArray();
-            const totalEarnings = payments.reduce((sum, p) => sum + parseFloat(p.salary || 0), 0);
-            res.send({ totalEarnings, transactionCount: payments.length, payments });
-        });
-
-        app.get('/admin-stats', async (req, res) => {
-            const usersCount = await usersCollectin.countDocuments();
-            const tutorsCount = await usersCollectin.countDocuments({role: 'tutor'});
-            const studentsCount = await usersCollectin.countDocuments({role: 'student'});
-            const totalJobs = await tutionsCollection.countDocuments();
-            const payments = await paymentsCollection.find().toArray();
-            const totalRevenue = payments.reduce((sum, p) => sum + parseFloat(p.salary || 0), 0);
-            res.send({ totalUsers: usersCount, tutors: tutorsCount, students: studentsCount, totalJobs, totalRevenue });
-        });
-
-        app.get('/user-stats/:email', async (req, res) => {
-            const email = req.params.email;
-            const user = await usersCollectin.findOne({ email: email });
-            if (!user) return res.status(404).send({ message: "User not found" });
-
-            let stats = {};
-            if (user.role === 'admin') {
-                stats = { totalUsers: await usersCollectin.countDocuments(), totalTuitions: await tutionsCollection.countDocuments() };
-            } else if (user.role === 'tutor') {
-                stats = { 
-                    totalApplied: await appicationsCollection.countDocuments({ tutorEmail: email }),
-                    ongoingTuitions: await appicationsCollection.countDocuments({ tutorEmail: email, status: 'paid' })
-                };
-            } else {
-                stats = { myPosts: await tutionsCollection.countDocuments({ studentEmail: email }), totalSpent: 0 };
-            }
-            res.send({ user, stats });
-        });
-
-        // --- CANCEL/DELETE TUITION ---
-        app.delete('/cancel-tuition/:id', async (req, res) => {
-            const id = req.params.id;
-            const filter = { _id: new ObjectId(id) };
-            try {
-                const result = await appicationsCollection.deleteOne(filter);
-                res.send(result);
-            } catch (error) {
-                res.status(500).send({ message: "Failed to cancel tuition", error: error.message });
-            }
-        });
-
-        // Endpoint to rate a tutor
-        app.post('/rate-tutor', async (req, res) => {
-            const { tutorId, rating } = req.body;
-            if (!tutorId || !rating) {
-                return res.status(400).send({ message: "Tutor ID and rating are required." });
-            }
-
-            try {
-                const filter = { _id: new ObjectId(tutorId) };
-                const updateDoc = {
-                    $push: { ratings: rating },
-                };
-                const result = await usersCollectin.updateOne(filter, updateDoc);
-                res.send(result);
-            } catch (error) {
-                res.status(500).send({ message: "Failed to submit rating", error: error.message });
-            }
-        });
-
-        // Endpoint to fetch messages between a tutor and a student
-        app.get('/messages', async (req, res) => {
-            const { tutorId, studentId } = req.query;
-            if (!tutorId || !studentId) {
-                return res.status(400).send({ message: "Tutor ID and Student ID are required." });
-            }
-
-            try {
-                const query = { tutorId, studentId };
-                const messages = await db.collection('messages').find(query).toArray();
-                res.send(messages);
-            } catch (error) {
-                res.status(500).send({ message: "Failed to fetch messages", error: error.message });
-            }
-        });
-
-        // Endpoint to send a message
-        app.post('/send-message', async (req, res) => {
-            const { tutorId, studentId, message } = req.body;
-            if (!tutorId || !studentId || !message) {
-                return res.status(400).send({ message: "All fields are required." });
-            }
-
-            try {
-                const newMessage = {
-                    tutorId,
-                    studentId,
-                    text: message,
-                    sender: req.body.sender || "Anonymous",
-                    timestamp: new Date().toISOString(),
-                };
-                const result = await db.collection('messages').insertOne(newMessage);
-                res.send(newMessage);
-            } catch (error) {
-                res.status(500).send({ message: "Failed to send message", error: error.message });
-            }
-        });
-
-        // Endpoint to fetch student profile
+        // --- PROFILES ---
         app.get('/student-profile/:id', async (req, res) => {
-            const id = req.params.id;
-            try {
-                const student = await usersCollectin.findOne({ _id: new ObjectId(id), role: 'student' });
-                if (!student) return res.status(404).send({ message: "Student not found" });
-                res.send(student);
-            } catch (error) {
-                res.status(500).send({ message: "Failed to fetch student profile", error: error.message });
-            }
+            const student = await usersCollectin.findOne({ _id: new ObjectId(req.params.id), role: 'student' });
+            res.send(student || { message: "Not found" });
         });
 
-        // Endpoint to fetch tutor profile
         app.get('/tutor-profile/:id', async (req, res) => {
-            const id = req.params.id;
-            try {
-                const tutor = await usersCollectin.findOne({ _id: new ObjectId(id), role: 'tutor' });
-                if (!tutor) return res.status(404).send({ message: "Tutor not found" });
-                res.send(tutor);
-            } catch (error) {
-                res.status(500).send({ message: "Failed to fetch tutor profile", error: error.message });
-            }
+            const tutor = await usersCollectin.findOne({ _id: new ObjectId(req.params.id), role: 'tutor' });
+            res.send(tutor || { message: "Not found" });
         });
 
-        // await client.db("admin").command({ping: 1});
-        // console.log("MongoDB Connected and Ready!");
     } finally{}
 }
 
