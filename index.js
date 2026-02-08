@@ -69,18 +69,34 @@ async function run() {
             if (email !== req.decoded.email) {
                 return res.status(403).send({ message: 'forbidden access' });
             }
-            const myTuitionsCount = await tutionsCollection.countDocuments({ studentEmail: email });
-            const myApplicationsCount = await appicationsCollection.countDocuments({ tutorEmail: email });
-            const myPayments = await paymentsCollection.find({ email: email }).toArray();
-            
-            res.send({
-                tuitions: myTuitionsCount,
-                applications: myApplicationsCount,
-                totalPaid: myPayments.length
-            });
+            const user = await usersCollectin.findOne({ email: email });
+            let stats = {};
+
+            if (user?.role === 'admin') {
+                const totalUsers = await usersCollectin.countDocuments();
+                const totalTuitions = await tutionsCollection.countDocuments();
+                const allPayments = await paymentsCollection.find().toArray();
+                const earnings = allPayments.reduce((sum, payment) => sum + parseFloat(payment.salary || 0), 0);
+                stats = { totalUsers, totalTuitions, earnings };
+            } 
+            else if (user?.role === 'tutor') {
+                const applications = await appicationsCollection.countDocuments({ tutorEmail: email });
+                stats = { applications };
+            } 
+            else {
+                const tuitions = await tutionsCollection.countDocuments({ studentEmail: email });
+                const totalPaid = await paymentsCollection.countDocuments({ email: email });
+                stats = { tuitions, totalPaid };
+            }
+            res.send({ user, stats });
         });
 
         // --- USERS & ROLE API ---
+        app.get('/users', verifyToken, async (req, res) => {
+            const result = await usersCollectin.find().toArray();
+            res.send(result);
+        });
+
         app.get('/users/role/:email', async (req, res) => {
             const email = req.params.email;
             if (email === "admin@etuition.com") return res.send({ role: "admin" });
@@ -97,7 +113,23 @@ async function run() {
             res.send(result);
         });
 
-        // --- NEW: TUTOR ONGOING JOBS ---
+        app.patch('/users/role/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const userRole = req.body.role;
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = { $set: { role: userRole } };
+            const result = await usersCollectin.updateOne(filter, updateDoc);
+            res.send(result);
+        });
+
+        app.delete('/users/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await usersCollectin.deleteOne(query);
+            res.send(result);
+        });
+
+        // --- TUTOR ONGOING JOBS ---
         app.get('/tutor-ongoing/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
             if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
@@ -106,16 +138,7 @@ async function run() {
             res.send(result);
         });
 
-        // --- NEW: TUTOR REVENUE HISTORY ---
-        app.get('/tutor-revenue/:email', verifyToken, async (req, res) => {
-            const email = req.params.email;
-            if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
-            const query = { tutorEmail: email }; 
-            const payments = await paymentsCollection.find(query).sort({ date: -1 }).toArray();
-            res.send({ payments });
-        });
-
-        // --- NEW: TUITION MANAGEMENT (Cancel & Update) ---
+        // --- TUITION MANAGEMENT ---
         app.delete('/cancel-tuition/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const result = await appicationsCollection.deleteOne({ _id: new ObjectId(id) });
@@ -127,27 +150,9 @@ async function run() {
             const updatedData = req.body;
             const filter = { _id: new ObjectId(id) };
             const updateDoc = {
-                $set: {
-                    subject: updatedData.subject,
-                    salary: updatedData.salary
-                },
+                $set: { subject: updatedData.subject, salary: updatedData.salary },
             };
             const result = await appicationsCollection.updateOne(filter, updateDoc);
-            res.send(result);
-        });
-
-        // --- APPLICATIONS / HIRING REQUESTS ---
-        app.get('/hiring-requests/:email', verifyToken, async (req, res) => {
-            const email = req.params.email;
-            if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
-            const result = await appicationsCollection.find({ tutorEmail: email }).sort({ appliedDate: -1 }).toArray();
-            res.send(result);
-        });
-
-        app.get('/hiring-requests-by-student/:email', verifyToken, async (req, res) => {
-            const email = req.params.email;
-            if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
-            const result = await appicationsCollection.find({ studentEmail: email }).sort({ appliedDate: -1 }).toArray();
             res.send(result);
         });
 
@@ -194,10 +199,3 @@ run().catch(console.dir);
 
 app.get('/', (req, res) => res.send("eTuition Server Running"));
 app.listen(port, () => console.log(`Server port: ${port}`));
-
-// console.log("Pinged your deployment. You successfully connected to MongoDB!");
-// await client.db("admin").command({ ping: 1 });
-// } finally {
-//   // Ensures that the client will close when you finish/error
-//   // await client.close();
-// }
