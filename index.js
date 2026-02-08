@@ -5,6 +5,7 @@ const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config();
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+const jwt = require('jsonwebtoken');
 
 // middlewares:
 const app = express();
@@ -41,12 +42,12 @@ async function run(){
         const paymentsCollection = db.collection("payments");
 
         // --- USERS & ADMIN MANAGEMENT API ---
-        app.get('/users', async(req, res)=>{
+        app.get('/users', verifyJWT, async(req, res)=>{
             const result = await usersCollectin.find().toArray();
             res.send(result);
         });
 
-        app.get('/users/role/:email', async(req, res)=>{
+        app.get('/users/role/:email', verifyJWT, async(req, res)=>{
             const email = req.params.email;
             if(email === "admin@etuition.com"){
                 return res.send({role: "admin"});
@@ -55,7 +56,7 @@ async function run(){
             res.send({role: user?.role || 'student'});
         });
 
-        app.post('/users', async(req, res)=>{
+        app.post('/users', verifyFirebaseToken, async(req, res)=>{
             const newUser = req.body;
             const query = {email: newUser.email}
             const existingUser = await usersCollectin.findOne(query);
@@ -66,7 +67,7 @@ async function run(){
             res.send(result);
         });
 
-        app.patch('/users/role/:id', async (req, res) => {
+        app.patch('/users/role/:id', verifyJWT, async (req, res) => {
             const id = req.params.id;
             const { role } = req.body;
             const filter = { _id: new ObjectId(id) };
@@ -75,7 +76,7 @@ async function run(){
             res.send(result);
         });
 
-        app.delete('/users/:id', async (req, res) => {
+        app.delete('/users/:id', verifyJWT, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
             const result = await usersCollectin.deleteOne(query);
@@ -84,7 +85,7 @@ async function run(){
 
 
         // --- TUITIONS API ---
-        app.get('/tuitions', async(req, res)=>{
+        app.get('/tuitions', verifyJWT, async(req, res)=>{
             try {
                 const email = req.query.email;
                 let query = {};
@@ -117,7 +118,7 @@ async function run(){
             }
         });
 
-        app.post('/tuitions', async(req, res)=>{
+        app.post('/tuitions', verifyJWT, async(req, res)=>{
             const newTuition = req.body;
             newTuition.status = 'pending';
             const result = await tutionsCollection.insertOne(newTuition);
@@ -135,7 +136,7 @@ async function run(){
 
 
         // --- APPLICATION API ---
-        app.post('/applications', async (req, res) => {
+        app.post('/applications', verifyJWT, async (req, res) => {
             const application = req.body;
             const query = { tutorEmail: application.tutorEmail, studentEmail: application.studentEmail };
             const alreadyApplied = await appicationsCollection.findOne(query);
@@ -174,7 +175,7 @@ async function run(){
 
 
         // --- PAYMENT & STRIPE ---
-        app.post("/create-payment-intent", async (req, res) => {
+        app.post("/create-payment-intent", verifyJWT, async (req, res) => {
             const { salary } = req.body;
             if (!salary) return res.status(400).send({ message: "Salary missing" });
             const amount = parseInt(parseFloat(salary) * 100);
@@ -268,3 +269,35 @@ run().catch(console.dir);
 
 app.get('/', (req, res)=> res.send("eTuition Server Running"));
 app.listen(port, ()=> console.log(`Server port: ${port}`));
+
+// Middleware to verify JWT
+function verifyJWT(req, res, next) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+        return res.status(401).send({ message: 'Unauthorized access' });
+    }
+    const token = authHeader.split(' ')[1];
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) {
+            return res.status(403).send({ message: 'Forbidden access' });
+        }
+        req.decoded = decoded;
+        next();
+    });
+}
+
+// Middleware to verify Firebase token
+async function verifyFirebaseToken(req, res, next) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+        return res.status(401).send({ message: 'Unauthorized access' });
+    }
+    const token = authHeader.split(' ')[1];
+    try {
+        const decodedToken = await admin.auth().verifyIdToken(token);
+        req.user = decodedToken;
+        next();
+    } catch (error) {
+        return res.status(403).send({ message: 'Invalid Firebase token' });
+    }
+}
