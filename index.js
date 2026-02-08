@@ -267,6 +267,63 @@ async function run(){
             }
         });
 
+        // Endpoint to rate a tutor
+        app.post('/rate-tutor', async (req, res) => {
+            const { tutorId, rating } = req.body;
+            if (!tutorId || !rating) {
+                return res.status(400).send({ message: "Tutor ID and rating are required." });
+            }
+
+            try {
+                const filter = { _id: new ObjectId(tutorId) };
+                const updateDoc = {
+                    $push: { ratings: rating },
+                };
+                const result = await usersCollectin.updateOne(filter, updateDoc);
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: "Failed to submit rating", error: error.message });
+            }
+        });
+
+        // Endpoint to fetch messages between a tutor and a student
+        app.get('/messages', async (req, res) => {
+            const { tutorId, studentId } = req.query;
+            if (!tutorId || !studentId) {
+                return res.status(400).send({ message: "Tutor ID and Student ID are required." });
+            }
+
+            try {
+                const query = { tutorId, studentId };
+                const messages = await db.collection('messages').find(query).toArray();
+                res.send(messages);
+            } catch (error) {
+                res.status(500).send({ message: "Failed to fetch messages", error: error.message });
+            }
+        });
+
+        // Endpoint to send a message
+        app.post('/send-message', async (req, res) => {
+            const { tutorId, studentId, message } = req.body;
+            if (!tutorId || !studentId || !message) {
+                return res.status(400).send({ message: "All fields are required." });
+            }
+
+            try {
+                const newMessage = {
+                    tutorId,
+                    studentId,
+                    text: message,
+                    sender: req.body.sender || "Anonymous",
+                    timestamp: new Date().toISOString(),
+                };
+                const result = await db.collection('messages').insertOne(newMessage);
+                res.send(newMessage);
+            } catch (error) {
+                res.status(500).send({ message: "Failed to send message", error: error.message });
+            }
+        });
+
         await client.db("admin").command({ping: 1});
         console.log("MongoDB Connected and Ready!");
     } finally{}
