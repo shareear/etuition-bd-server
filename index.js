@@ -63,7 +63,7 @@ async function run() {
             res.send({ token });
         });
 
-        // --- USER STATS API ---
+        // --- USER STATS API (FIXED FOR TUTOR STATS) ---
         app.get('/user-stats/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
             if (email !== req.decoded.email) {
@@ -80,12 +80,24 @@ async function run() {
                 stats = { totalUsers, totalTuitions, earnings };
             } 
             else if (user?.role === 'tutor') {
+                // Count all applications
                 const applications = await appicationsCollection.countDocuments({ tutorEmail: email });
-                stats = { applications };
+                
+                // FIXED: Calculate ongoing tuitions (where status is 'paid')
+                const ongoingTuitions = await appicationsCollection.countDocuments({ 
+                    tutorEmail: email, 
+                    status: 'paid' 
+                });
+
+                // FIXED: Calculate total earnings from paymentsCollection
+                const tutorPayments = await paymentsCollection.find({ tutorEmail: email }).toArray();
+                const totalEarnings = tutorPayments.reduce((sum, p) => sum + parseFloat(p.salary || 0), 0);
+
+                stats = { applications, ongoingTuitions, totalEarnings };
             } 
             else {
                 const tuitions = await tutionsCollection.countDocuments({ studentEmail: email });
-                const totalPaid = await paymentsCollection.countDocuments({ email: email });
+                const totalPaid = await paymentsCollection.countDocuments({ studentEmail: email });
                 stats = { tuitions, totalPaid };
             }
             res.send({ user, stats });
@@ -167,7 +179,6 @@ async function run() {
         // --- ADD THIS TO YOUR SERVER.JS ---
         app.post('/hiring-requests', verifyToken, async (req, res) => {
             const application = req.body;
-            // Uses your specific collection name with the typo 'appicationsCollection'
             const result = await appicationsCollection.insertOne(application);
             res.send(result);
         });
@@ -178,7 +189,7 @@ async function run() {
             if (email !== req.decoded.email) {
                 return res.status(403).send({ message: 'forbidden access' });
             }
-            const query = { tutorEmail: email }; // Specifically look for the tutor's email
+            const query = { tutorEmail: email };
             const result = await appicationsCollection.find(query).toArray();
             res.send(result);
         });
@@ -191,9 +202,19 @@ async function run() {
             const updateDoc = {
                 $set: { status: status },
             };
-            // Note: using 'appicationsCollection' to match your existing typo
             const result = await appicationsCollection.updateOne(filter, updateDoc);
             res.send(result);
+        });
+
+        // --- TUTOR REVENUE HISTORY API ---
+        app.get('/tutor-revenue/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            const query = { tutorEmail: email };
+            const payments = await paymentsCollection.find(query).sort({ date: -1 }).toArray();
+            res.send(payments);
         });
 
         // Add this to your server.js inside the run() function
