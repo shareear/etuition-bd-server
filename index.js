@@ -63,13 +63,12 @@ async function run() {
             res.send({ token });
         });
 
-        // --- USER STATS API (Fixes 404 Error) ---
+        // --- USER STATS API ---
         app.get('/user-stats/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
             if (email !== req.decoded.email) {
                 return res.status(403).send({ message: 'forbidden access' });
             }
-            // প্রোফাইলের জন্য প্রয়োজনীয় স্ট্যাটাস হিসেব করা
             const myTuitionsCount = await tutionsCollection.countDocuments({ studentEmail: email });
             const myApplicationsCount = await appicationsCollection.countDocuments({ tutorEmail: email });
             const myPayments = await paymentsCollection.find({ email: email }).toArray();
@@ -98,21 +97,56 @@ async function run() {
             res.send(result);
         });
 
-        // --- APPLICATIONS / HIRING REQUESTS (Protected) ---
+        // --- NEW: TUTOR ONGOING JOBS ---
+        app.get('/tutor-ongoing/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
+            const query = { tutorEmail: email, status: 'paid' };
+            const result = await appicationsCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        // --- NEW: TUTOR REVENUE HISTORY ---
+        app.get('/tutor-revenue/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
+            const query = { tutorEmail: email }; 
+            const payments = await paymentsCollection.find(query).sort({ date: -1 }).toArray();
+            res.send({ payments });
+        });
+
+        // --- NEW: TUITION MANAGEMENT (Cancel & Update) ---
+        app.delete('/cancel-tuition/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const result = await appicationsCollection.deleteOne({ _id: new ObjectId(id) });
+            res.send(result);
+        });
+
+        app.patch('/update-tuition/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const updatedData = req.body;
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = {
+                $set: {
+                    subject: updatedData.subject,
+                    salary: updatedData.salary
+                },
+            };
+            const result = await appicationsCollection.updateOne(filter, updateDoc);
+            res.send(result);
+        });
+
+        // --- APPLICATIONS / HIRING REQUESTS ---
         app.get('/hiring-requests/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
-            if (email !== req.decoded.email) {
-                return res.status(403).send({ message: 'forbidden access' });
-            }
+            if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
             const result = await appicationsCollection.find({ tutorEmail: email }).sort({ appliedDate: -1 }).toArray();
             res.send(result);
         });
 
         app.get('/hiring-requests-by-student/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
-            if (email !== req.decoded.email) {
-                return res.status(403).send({ message: 'forbidden access' });
-            }
+            if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
             const result = await appicationsCollection.find({ studentEmail: email }).sort({ appliedDate: -1 }).toArray();
             res.send(result);
         });
@@ -160,3 +194,10 @@ run().catch(console.dir);
 
 app.get('/', (req, res) => res.send("eTuition Server Running"));
 app.listen(port, () => console.log(`Server port: ${port}`));
+
+// console.log("Pinged your deployment. You successfully connected to MongoDB!");
+// await client.db("admin").command({ ping: 1 });
+// } finally {
+//   // Ensures that the client will close when you finish/error
+//   // await client.close();
+// }
