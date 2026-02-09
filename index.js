@@ -379,7 +379,7 @@ async function run() {
                 });
                 res.send({ clientSecret: paymentIntent.client_secret });
             } catch (error) {
-                // console.error("Payment Intent Error:", error);
+                console.error("Payment Intent Error:", error);
                 res.status(500).send({ message: "Failed to create payment intent" });
             }
         });
@@ -408,4 +408,4 @@ async function run() {
 run().catch(console.dir);
 
 app.get('/', (req, res) => res.send("eTuition Server Running"));
-// app.listen(port, () => console.log(`Server port: ${port}`));
+app.listen(port, () => console.log(`Server port: ${port}`));
