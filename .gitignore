@@ -1,3 +1,4 @@
 .env
 etuition-bd-firebase-sdk.json
 node_modules
+.vercel
