@@ -63,44 +63,67 @@ async function run() {
             res.send({ token });
         });
 
-        // --- USER STATS API (FIXED FOR TUTOR STATS) ---
-        app.get('/user-stats/:email', verifyToken, async (req, res) => {
-            const email = req.params.email;
-            if (email !== req.decoded.email) {
-                return res.status(403).send({ message: 'forbidden access' });
-            }
-            const user = await usersCollectin.findOne({ email: email });
-            let stats = {};
+        // --- CONSOLIDATED USER STATS & PUBLIC PROFILE API (FIXED) ---
+        // Removed verifyToken from the route level to allow public profile views
+        app.get('/user-stats/:email', async (req, res) => {
+            try {
+                const email = req.params.email;
+                const authHeader = req.headers.authorization;
 
-            if (user?.role === 'admin') {
-                const totalUsers = await usersCollectin.countDocuments();
-                const totalTuitions = await tutionsCollection.countDocuments();
-                const allPayments = await paymentsCollection.find().toArray();
-                const earnings = allPayments.reduce((sum, payment) => sum + parseFloat(payment.salary || 0), 0);
-                stats = { totalUsers, totalTuitions, earnings };
-            } 
-            else if (user?.role === 'tutor') {
-                // Count all applications
-                const applications = await appicationsCollection.countDocuments({ tutorEmail: email });
-                
-                // FIXED: Calculate ongoing tuitions (where status is 'paid')
-                const ongoingTuitions = await appicationsCollection.countDocuments({ 
-                    tutorEmail: email, 
-                    status: 'paid' 
+                const user = await usersCollectin.findOne({ email: email });
+                if (!user) return res.status(404).send({ message: 'User not found' });
+
+                // Define public data for Details Pages
+                const publicProfile = {
+                    name: user.name,
+                    email: user.email,
+                    image: user.image || user.photoURL,
+                    role: user.role,
+                    phone: user.phone,
+                    address: user.address,
+                    institution: user.institution,
+                    class: user.class,
+                    gender: user.gender
+                };
+
+                // If no token is provided, just return the public profile
+                if (!authHeader) {
+                    return res.send({ user: publicProfile });
+                }
+
+                // If token IS provided, verify it to add heavy dashboard stats
+                const token = authHeader.split(' ')[1];
+                jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, async (err, decoded) => {
+                    if (err || email !== decoded.email) {
+                        // Token invalid or doesn't match email, return public data only
+                        return res.send({ user: publicProfile });
+                    }
+
+                    let stats = {};
+                    if (user?.role === 'admin') {
+                        const totalUsers = await usersCollectin.countDocuments();
+                        const totalTuitions = await tutionsCollection.countDocuments();
+                        const allPayments = await paymentsCollection.find().toArray();
+                        const earnings = allPayments.reduce((sum, payment) => sum + parseFloat(payment.salary || 0), 0);
+                        stats = { totalUsers, totalTuitions, earnings };
+                    } 
+                    else if (user?.role === 'tutor') {
+                        const applications = await appicationsCollection.countDocuments({ tutorEmail: email });
+                        const ongoingTuitions = await appicationsCollection.countDocuments({ tutorEmail: email, status: 'paid' });
+                        const tutorPayments = await paymentsCollection.find({ tutorEmail: email }).toArray();
+                        const totalEarnings = tutorPayments.reduce((sum, p) => sum + parseFloat(p.salary || 0), 0);
+                        stats = { applications, ongoingTuitions, totalEarnings };
+                    } 
+                    else {
+                        const tuitions = await tutionsCollection.countDocuments({ studentEmail: email });
+                        const totalPaid = await paymentsCollection.countDocuments({ studentEmail: email });
+                        stats = { tuitions, totalPaid };
+                    }
+                    res.send({ user: publicProfile, stats });
                 });
-
-                // FIXED: Calculate total earnings from paymentsCollection
-                const tutorPayments = await paymentsCollection.find({ tutorEmail: email }).toArray();
-                const totalEarnings = tutorPayments.reduce((sum, p) => sum + parseFloat(p.salary || 0), 0);
-
-                stats = { applications, ongoingTuitions, totalEarnings };
-            } 
-            else {
-                const tuitions = await tutionsCollection.countDocuments({ studentEmail: email });
-                const totalPaid = await paymentsCollection.countDocuments({ studentEmail: email });
-                stats = { tuitions, totalPaid };
+            } catch (error) {
+                res.status(500).send({ message: "Internal Server Error" });
             }
-            res.send({ user, stats });
         });
 
         // --- USERS & ROLE API ---
@@ -160,9 +183,7 @@ async function run() {
             const id = req.params.id;
             const status = req.body.status;
             const filter = { _id: new ObjectId(id) };
-            const updateDoc = {
-                $set: { status: status },
-            };
+            const updateDoc = { $set: { status: status } };
             const result = await tutionsCollection.updateOne(filter, updateDoc);
             res.send(result);
         });
@@ -176,14 +197,12 @@ async function run() {
             res.send(result);
         });
 
-        // --- ADD THIS TO YOUR SERVER.JS ---
         app.post('/hiring-requests', verifyToken, async (req, res) => {
             const application = req.body;
             const result = await appicationsCollection.insertOne(application);
             res.send(result);
         });
 
-        // Add this to your backend server.js inside run()
         app.get('/hiring-requests-by-tutor/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
             if (email !== req.decoded.email) {
@@ -194,14 +213,11 @@ async function run() {
             res.send(result);
         });
 
-        // server.js inside run()
         app.patch('/applications/status/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const status = req.body.status;
             const filter = { _id: new ObjectId(id) };
-            const updateDoc = {
-                $set: { status: status },
-            };
+            const updateDoc = { $set: { status: status } };
             const result = await appicationsCollection.updateOne(filter, updateDoc);
             res.send(result);
         });
@@ -217,7 +233,6 @@ async function run() {
             res.send(payments);
         });
 
-        // Add this to your server.js inside the run() function
         app.delete('/applications/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
@@ -244,9 +259,7 @@ async function run() {
             const id = req.params.id;
             const updatedData = req.body;
             const filter = { _id: new ObjectId(id) };
-            const updateDoc = {
-                $set: { subject: updatedData.subject, salary: updatedData.salary },
-            };
+            const updateDoc = { $set: { subject: updatedData.subject, salary: updatedData.salary } };
             const result = await appicationsCollection.updateOne(filter, updateDoc);
             res.send(result);
         });
@@ -271,7 +284,6 @@ async function run() {
             res.send(result);
         });
 
-        // --- FIXED: TUITION POST DELETE & UPDATE (FOR MY POSTS PAGE) ---
         app.delete('/tuitions/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
@@ -301,7 +313,6 @@ async function run() {
                 return res.status(403).send({ message: 'forbidden access' });
             }
             const query = { studentEmail: email };
-            // Fetch all payments made by this student
             const expenses = await paymentsCollection.find(query).sort({ date: -1 }).toArray();
             res.send(expenses);
         });
@@ -309,7 +320,7 @@ async function run() {
         // --- UNIFIED ONGOING JOBS FETCH ---
         app.get('/ongoing-tuitions/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
-            const role = req.query.role; // Pass role from frontend
+            const role = req.query.role; 
             
             if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
 
@@ -327,17 +338,10 @@ async function run() {
         app.get('/admin/analytics', verifyToken, async (req, res) => {
             const totalUsers = await usersCollectin.countDocuments();
             const payments = await paymentsCollection.find().toArray();
-            
-            // Calculate platform revenue: 10% from Student + 10% from Tutor = 20% total per transaction
             const totalVolume = payments.reduce((sum, p) => sum + parseFloat(p.salary || 0), 0);
             const platformRevenue = totalVolume * 0.20; 
 
-            res.send({
-                totalUsers,
-                totalVolume,
-                platformRevenue,
-                payments
-            });
+            res.send({ totalUsers, totalVolume, platformRevenue, payments });
         });
 
         // --- TERMINATE CONTRACT & NOTIFY ---
@@ -349,7 +353,6 @@ async function run() {
             const deleteResult = await appicationsCollection.deleteOne(query);
 
             if (deleteResult.deletedCount > 0) {
-                // Log notification in a collection (Optional: you can create a 'notifications' collection)
                 const notification = {
                     receiverEmail: tutorEmail,
                     senderEmail: studentEmail,
@@ -399,7 +402,7 @@ async function run() {
             }
         });
 
-        console.log("🚀 MongoDB Connected & Routes Fully Secured");
+        console.log("🚀 MongoDB Connected & Routes Fully Optimized");
     } finally { }
 }
 run().catch(console.dir);
