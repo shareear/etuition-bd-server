@@ -1,6 +1,5 @@
 ### ⚙️ Server-Side README (`/server/README.md`)
-
-```markdown
+Live Link- https://etuition-bd-6b2cf.web.app/
 # ⚙️ ETUITION BD - Server
 
 The robust backend engine powering the ETUITION BD ecosystem. Built with **Node.js** and **Express 5.0**, it handles secure data persistence, authentication, and financial transactions.
