@@ -150,7 +150,12 @@ async function run() {
             const newUser = req.body;
             const query = { email: newUser.email };
             const existingUser = await usersCollectin.findOne(query);
-            if (existingUser) return res.send({ message: 'user already exists', insertedId: null });
+            
+            // FIX: If user exists, we return the existing user's ID so the frontend can still navigate
+            if (existingUser) {
+                return res.send({ message: 'user already exists', insertedId: existingUser._id });
+            }
+            
             const result = await usersCollectin.insertOne(newUser);
             res.send(result);
         });
