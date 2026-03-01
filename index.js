@@ -49,7 +49,7 @@ const client = new MongoClient(uri, {
 
 async function run() {
     try {
-        // await client.connect("admin");
+        await client.connect();
         const db = client.db("etuitionBD");
         const tutionsCollection = db.collection("tution");
         const usersCollectin = db.collection("users");
@@ -143,6 +143,15 @@ async function run() {
             res.send(result);
         });
 
+        // --- ADMIN: ANALYTICS API (RESTORED) ---
+        app.get('/admin/analytics', verifyToken, async (req, res) => {
+            const totalUsers = await usersCollectin.countDocuments();
+            const payments = await paymentsCollection.find().toArray();
+            const totalVolume = payments.reduce((sum, p) => sum + parseFloat(p.salary || 0), 0);
+            const platformRevenue = totalVolume * 0.20; 
+            res.send({ totalUsers, totalVolume, platformRevenue, payments });
+        });
+
         // --- RESTORED APPLICATIONS COLLECTION APIS ---
         app.post('/hiring-requests', verifyToken, async (req, res) => {
             const result = await appicationsCollection.insertOne(req.body);
@@ -206,18 +215,17 @@ async function run() {
             res.send(result);
         });
 
-        app.get('/tution/:id', async (req, res)=>{
+        app.get('/tution/:id', async (req, res) => {
+            try {
                 const id = req.params.id;
-                const result = await tutionsCollection.findOne({_id: new ObjectId(id)});
-
-                if(!result) {
-                    return res.status(404).send({message: "Tuition not found"});
+                const result = await tutionsCollection.findOne({ _id: new ObjectId(id) });
+                if (!result) {
+                    return res.status(404).send({ message: "Tuition not found" });
                 }
-                else{
-                    res.status(500).send({message: "Internal Server Error"});
-                };
-
                 res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: "Internal Server Error" });
+            }
         });
 
         app.post('/tution', verifyToken, async (req, res) => {
