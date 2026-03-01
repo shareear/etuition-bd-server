@@ -49,9 +49,9 @@ const client = new MongoClient(uri, {
 
 async function run() {
     try {
-        await client.connect();
+        // await client.connect();
         const db = client.db("etuitionBD");
-        const tutionsCollection = db.collection("tution");
+        const tutionsCollection = db.collection("tuitions");
         const usersCollectin = db.collection("users");
         const appicationsCollection = db.collection("applications");
         const paymentsCollection = db.collection("payments");
@@ -68,46 +68,69 @@ async function run() {
             try {
                 const email = req.params.email;
                 const authHeader = req.headers.authorization;
+
                 const user = await usersCollectin.findOne({ email: email });
                 if (!user) return res.status(404).send({ message: 'User not found' });
 
                 const publicProfile = {
-                    name: user.name, email: user.email, image: user.image || user.photoURL,
-                    role: user.role, phone: user.phone, address: user.address,
-                    institution: user.institution, class: user.class, gender: user.gender
+                    name: user.name,
+                    email: user.email,
+                    image: user.image || user.photoURL,
+                    role: user.role,
+                    phone: user.phone,
+                    address: user.address,
+                    institution: user.institution,
+                    class: user.class,
+                    gender: user.gender
                 };
 
-                if (!authHeader) return res.send({ user: publicProfile });
+                if (!authHeader) {
+                    return res.send({ user: publicProfile });
+                }
 
                 const token = authHeader.split(' ')[1];
                 jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, async (err, decoded) => {
-                    if (err || email !== decoded.email) return res.send({ user: publicProfile });
+                    if (err || email !== decoded.email) {
+                        return res.send({ user: publicProfile });
+                    }
+
                     let stats = {};
                     if (user?.role === 'admin') {
                         const totalUsers = await usersCollectin.countDocuments();
-                        const totaltution = await tutionsCollection.countDocuments();
+                        const totalTuitions = await tutionsCollection.countDocuments();
                         const allPayments = await paymentsCollection.find().toArray();
                         const earnings = allPayments.reduce((sum, payment) => sum + parseFloat(payment.salary || 0), 0);
-                        stats = { totalUsers, totaltution, earnings };
-                    } else if (user?.role === 'tutor') {
+                        stats = { totalUsers, totalTuitions, earnings };
+                    } 
+                    else if (user?.role === 'tutor') {
                         const applications = await appicationsCollection.countDocuments({ tutorEmail: email });
-                        const ongoingtution = await appicationsCollection.countDocuments({ tutorEmail: email, status: 'paid' });
+                        const ongoingTuitions = await appicationsCollection.countDocuments({ tutorEmail: email, status: 'paid' });
                         const tutorPayments = await paymentsCollection.find({ tutorEmail: email }).toArray();
                         const totalEarnings = tutorPayments.reduce((sum, p) => sum + parseFloat(p.salary || 0), 0);
-                        stats = { applications, ongoingtution, totalEarnings };
-                    } else {
-                        const tution = await tutionsCollection.countDocuments({ studentEmail: email });
+                        stats = { applications, ongoingTuitions, totalEarnings };
+                    } 
+                    else {
+                        const tuitions = await tutionsCollection.countDocuments({ studentEmail: email });
                         const totalPaid = await paymentsCollection.countDocuments({ studentEmail: email });
-                        stats = { tution, totalPaid };
+                        stats = { tuitions, totalPaid };
                     }
                     res.send({ user: publicProfile, stats });
                 });
-            } catch (error) { res.status(500).send({ message: "Internal Server Error" }); }
+            } catch (error) {
+                res.status(500).send({ message: "Internal Server Error" });
+            }
         });
 
         // --- USERS & ROLE API ---
         app.get('/users', async (req, res) => {
             const result = await usersCollectin.find().toArray();
+            res.send(result);
+        });
+
+        app.get('/users/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await usersCollectin.findOne(query);
             res.send(result);
         });
 
@@ -127,14 +150,31 @@ async function run() {
             res.send(result);
         });
 
-        // --- ADMIN: MANAGE tution ---
-        app.get('/admin/pending-tution', verifyToken, async (req, res) => {
+        app.patch('/users/role/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const userRole = req.body.role;
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = { $set: { role: userRole } };
+            const result = await usersCollectin.updateOne(filter, updateDoc);
+            res.send(result);
+        });
+
+        app.delete('/users/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await usersCollectin.deleteOne(query);
+            res.send(result);
+        });
+
+        // --- ADMIN: MANAGE TUITIONS (PENDING FETCH) ---
+        app.get('/admin/pending-tuitions', verifyToken, async (req, res) => {
             const query = { status: 'pending' };
             const result = await tutionsCollection.find(query).toArray();
             res.send(result);
         });
 
-        app.patch('/tution/status/:id', verifyToken, async (req, res) => {
+        // --- ADMIN: UPDATE TUITION STATUS (APPROVE/REJECT) ---
+        app.patch('/tuitions/status/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const status = req.body.status;
             const filter = { _id: new ObjectId(id) };
@@ -143,7 +183,146 @@ async function run() {
             res.send(result);
         });
 
-        // --- ADMIN: ANALYTICS API (RESTORED) ---
+        // --- TUTOR ONGOING JOBS ---
+        app.get('/tutor-ongoing/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
+            const query = { tutorEmail: email, status: 'paid' };
+            const result = await appicationsCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        app.post('/hiring-requests', verifyToken, async (req, res) => {
+            const application = req.body;
+            const result = await appicationsCollection.insertOne(application);
+            res.send(result);
+        });
+
+        app.get('/hiring-requests-by-tutor/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            const query = { tutorEmail: email };
+            const result = await appicationsCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        app.patch('/applications/status/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const status = req.body.status;
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = { $set: { status: status } };
+            const result = await appicationsCollection.updateOne(filter, updateDoc);
+            res.send(result);
+        });
+
+        app.get('/tutor-revenue/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            const query = { tutorEmail: email };
+            const payments = await paymentsCollection.find(query).sort({ date: -1 }).toArray();
+            res.send(payments);
+        });
+
+        app.delete('/applications/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await appicationsCollection.deleteOne(query);
+            res.send(result);
+        });
+
+        app.get('/hiring-requests-by-student/:email', async (req, res) => {
+            const email = req.params.email;
+            const query = { studentEmail: email };
+            const result = await appicationsCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        app.delete('/cancel-tuition/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const result = await appicationsCollection.deleteOne({ _id: new ObjectId(id) });
+            res.send(result);
+        });
+
+        app.patch('/update-tuition/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const updatedData = req.body;
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = { $set: { subject: updatedData.subject, salary: updatedData.salary } };
+            const result = await appicationsCollection.updateOne(filter, updateDoc);
+            res.send(result);
+        });
+
+        // --- TUITIONS CORE API (FIXED LOGIC) ---
+        app.get('/tuitions', async (req, res) => {
+            const email = req.query.email;
+            // FIXED: If email exists, find all by student. If no email, show ONLY approved for public.
+            let query = email ? { studentEmail: email } : { status: 'approved' };
+            const result = await tutionsCollection.find(query).sort({ postedDate: -1 }).toArray();
+            res.send(result);
+        });
+
+        app.get('/tuition/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await tutionsCollection.findOne(query);
+            res.send(result);
+        });
+
+        app.post('/tuitions', verifyToken, async (req, res) => {
+            const result = await tutionsCollection.insertOne(req.body);
+            res.send(result);
+        });
+
+        app.delete('/tuitions/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await tutionsCollection.deleteOne(query);
+            res.send(result);
+        });
+
+        app.patch('/tuitions/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) };
+            const updatedDoc = {
+                $set: {
+                    subject: req.body.subject,
+                    class: req.body.class,
+                    salary: parseFloat(req.body.salary),
+                    location: req.body.location
+                }
+            };
+            const result = await tutionsCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        });
+
+        app.get('/student-expenses/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            const query = { studentEmail: email };
+            const expenses = await paymentsCollection.find(query).sort({ date: -1 }).toArray();
+            res.send(expenses);
+        });
+
+        app.get('/ongoing-tuitions/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            const role = req.query.role; 
+            if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
+            let query = { status: 'paid' };
+            if (role === 'tutor') {
+                query.tutorEmail = email;
+            } else {
+                query.studentEmail = email;
+            }
+            const result = await appicationsCollection.find(query).toArray();
+            res.send(result);
+        });
+
         app.get('/admin/analytics', verifyToken, async (req, res) => {
             const totalUsers = await usersCollectin.countDocuments();
             const payments = await paymentsCollection.find().toArray();
@@ -152,119 +331,56 @@ async function run() {
             res.send({ totalUsers, totalVolume, platformRevenue, payments });
         });
 
-        // --- RESTORED APPLICATIONS COLLECTION APIS ---
-        app.post('/hiring-requests', verifyToken, async (req, res) => {
-            const result = await appicationsCollection.insertOne(req.body);
-            res.send(result);
-        });
-
-        app.get('/hiring-requests-by-tutor/:email', verifyToken, async (req, res) => {
-            const email = req.params.email;
-            if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
-            const result = await appicationsCollection.find({ tutorEmail: email }).toArray();
-            res.send(result);
-        });
-
-        app.get('/hiring-requests-by-student/:email', async (req, res) => {
-            const result = await appicationsCollection.find({ studentEmail: req.params.email }).toArray();
-            res.send(result);
-        });
-
-        app.patch('/applications/status/:id', verifyToken, async (req, res) => {
-            const result = await appicationsCollection.updateOne(
-                { _id: new ObjectId(req.params.id) },
-                { $set: { status: req.body.status } }
-            );
-            res.send(result);
-        });
-
-        app.delete('/applications/:id', verifyToken, async (req, res) => {
-            const result = await appicationsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-            res.send(result);
-        });
-
-        app.get('/ongoing-tution/:email', verifyToken, async (req, res) => {
-            const email = req.params.email;
-            const role = req.query.role;
-            if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
-            let query = { status: 'paid' };
-            role === 'tutor' ? query.tutorEmail = email : query.studentEmail = email;
-            const result = await appicationsCollection.find(query).toArray();
-            res.send(result);
-        });
-
         app.delete('/terminate-contract/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const { tutorEmail, studentEmail, subject } = req.body;
-            const deleteResult = await appicationsCollection.deleteOne({ _id: new ObjectId(id) });
+            const query = { _id: new ObjectId(id) };
+            const deleteResult = await appicationsCollection.deleteOne(query);
             if (deleteResult.deletedCount > 0) {
-                await db.collection("notifications").insertOne({
-                    receiverEmail: tutorEmail, senderEmail: studentEmail,
+                const notification = {
+                    receiverEmail: tutorEmail,
+                    senderEmail: studentEmail,
                     message: `Contract for ${subject} was terminated by the student.`,
-                    type: 'termination', date: new Date()
-                });
+                    type: 'termination',
+                    date: new Date()
+                };
+                await db.collection("notifications").insertOne(notification);
             }
             res.send(deleteResult);
         });
 
-        // --- tution CORE API ---
-        app.get('/tution', async (req, res) => {
-            const email = req.query.email;
-            let query = email ? { studentEmail: email } : { status: 'approved' };
-            const result = await tutionsCollection.find(query).sort({ postedDate: -1 }).toArray();
-            res.send(result);
-        });
-
-        app.get('/tution/:id', async (req, res) => {
-            try {
-                const id = req.params.id;
-                const result = await tutionsCollection.findOne({ _id: new ObjectId(id) });
-                if (!result) {
-                    return res.status(404).send({ message: "Tuition not found" });
-                }
-                res.send(result);
-            } catch (error) {
-                res.status(500).send({ message: "Internal Server Error" });
-            }
-        });
-
-        app.post('/tution', verifyToken, async (req, res) => {
-            const result = await tutionsCollection.insertOne(req.body);
-            res.send(result);
-        });
-
-        app.patch('/tution/:id', verifyToken, async (req, res) => {
-            const updatedDoc = { $set: { 
-                subject: req.body.subject, class: req.body.class, 
-                salary: parseFloat(req.body.salary), location: req.body.location 
-            }};
-            const result = await tutionsCollection.updateOne({ _id: new ObjectId(req.params.id) }, updatedDoc);
-            res.send(result);
-        });
-
-        app.delete('/tution/:id', verifyToken, async (req, res) => {
-            const result = await tutionsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-            res.send(result);
-        });
-
-        // --- STRIPE & PAYMENTS ---
         app.post("/create-payment-intent", verifyToken, async (req, res) => {
-            const amount = Math.round(parseFloat(req.body.salary) * 100);
-            const paymentIntent = await stripe.paymentIntents.create({ amount, currency: "usd", payment_method_types: ["card"] });
-            res.send({ clientSecret: paymentIntent.client_secret });
+            try {
+                const { salary } = req.body;
+                const amount = Math.round(parseFloat(salary) * 100);
+                if (!amount || amount < 1) return res.status(400).send({ message: "Invalid amount" });
+                const paymentIntent = await stripe.paymentIntents.create({
+                    amount: amount,
+                    currency: "usd",
+                    payment_method_types: ["card"],
+                });
+                res.send({ clientSecret: paymentIntent.client_secret });
+            } catch (error) {
+                res.status(500).send({ message: "Failed to create payment intent" });
+            }
         });
 
         app.post("/payments", verifyToken, async (req, res) => {
-            const payment = req.body;
-            const paymentResult = await paymentsCollection.insertOne(payment);
-            if (payment.appId) {
-                await appicationsCollection.updateOne({ _id: new ObjectId(payment.appId) }, { $set: { status: "paid" } });
+            try {
+                const payment = req.body;
+                const paymentResult = await paymentsCollection.insertOne(payment);
+                if (payment.appId) {
+                    const query = { _id: new ObjectId(payment.appId) };
+                    const updateDoc = { $set: { status: "paid" } };
+                    await appicationsCollection.updateOne(query, updateDoc);
+                }
+                res.send({ paymentResult });
+            } catch (error) {
+                res.status(500).send({ message: "Failed to save payment" });
             }
-            res.send({ paymentResult });
         });
 
-        console.log("🚀 Local Server Ready on Port 3000");
-
+        console.log("🚀 Server Ready");
     } finally { }
 }
 run().catch(console.dir);
