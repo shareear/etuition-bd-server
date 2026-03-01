@@ -49,8 +49,9 @@ const client = new MongoClient(uri, {
 
 async function run() {
     try {
+        // await client.connect("admin");
         const db = client.db("etuitionBD");
-        const tutionsCollection = db.collection("tuitions");
+        const tutionsCollection = db.collection("tution");
         const usersCollectin = db.collection("users");
         const appicationsCollection = db.collection("applications");
         const paymentsCollection = db.collection("payments");
@@ -84,20 +85,20 @@ async function run() {
                     let stats = {};
                     if (user?.role === 'admin') {
                         const totalUsers = await usersCollectin.countDocuments();
-                        const totalTuitions = await tutionsCollection.countDocuments();
+                        const totaltution = await tutionsCollection.countDocuments();
                         const allPayments = await paymentsCollection.find().toArray();
                         const earnings = allPayments.reduce((sum, payment) => sum + parseFloat(payment.salary || 0), 0);
-                        stats = { totalUsers, totalTuitions, earnings };
+                        stats = { totalUsers, totaltution, earnings };
                     } else if (user?.role === 'tutor') {
                         const applications = await appicationsCollection.countDocuments({ tutorEmail: email });
-                        const ongoingTuitions = await appicationsCollection.countDocuments({ tutorEmail: email, status: 'paid' });
+                        const ongoingtution = await appicationsCollection.countDocuments({ tutorEmail: email, status: 'paid' });
                         const tutorPayments = await paymentsCollection.find({ tutorEmail: email }).toArray();
                         const totalEarnings = tutorPayments.reduce((sum, p) => sum + parseFloat(p.salary || 0), 0);
-                        stats = { applications, ongoingTuitions, totalEarnings };
+                        stats = { applications, ongoingtution, totalEarnings };
                     } else {
-                        const tuitions = await tutionsCollection.countDocuments({ studentEmail: email });
+                        const tution = await tutionsCollection.countDocuments({ studentEmail: email });
                         const totalPaid = await paymentsCollection.countDocuments({ studentEmail: email });
-                        stats = { tuitions, totalPaid };
+                        stats = { tution, totalPaid };
                     }
                     res.send({ user: publicProfile, stats });
                 });
@@ -126,14 +127,14 @@ async function run() {
             res.send(result);
         });
 
-        // --- ADMIN: MANAGE TUITIONS ---
-        app.get('/admin/pending-tuitions', verifyToken, async (req, res) => {
+        // --- ADMIN: MANAGE tution ---
+        app.get('/admin/pending-tution', verifyToken, async (req, res) => {
             const query = { status: 'pending' };
             const result = await tutionsCollection.find(query).toArray();
             res.send(result);
         });
 
-        app.patch('/tuitions/status/:id', verifyToken, async (req, res) => {
+        app.patch('/tution/status/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const status = req.body.status;
             const filter = { _id: new ObjectId(id) };
@@ -173,7 +174,7 @@ async function run() {
             res.send(result);
         });
 
-        app.get('/ongoing-tuitions/:email', verifyToken, async (req, res) => {
+        app.get('/ongoing-tution/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
             const role = req.query.role;
             if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
@@ -197,36 +198,34 @@ async function run() {
             res.send(deleteResult);
         });
 
-        // --- TUITIONS CORE API ---
-        app.get('/tuitions', async (req, res) => {
+        // --- tution CORE API ---
+        app.get('/tution', async (req, res) => {
             const email = req.query.email;
             let query = email ? { studentEmail: email } : { status: 'approved' };
             const result = await tutionsCollection.find(query).sort({ postedDate: -1 }).toArray();
             res.send(result);
         });
 
-        app.get('/tuitions/:id', async (req, res)=>{
-            try{
+        app.get('/tution/:id', async (req, res)=>{
                 const id = req.params.id;
                 const result = await tutionsCollection.findOne({_id: new ObjectId(id)});
 
                 if(!result) {
                     return res.status(404).send({message: "Tuition not found"});
                 }
+                else{
+                    res.status(500).send({message: "Internal Server Error"});
+                };
 
                 res.send(result);
-            }
-            catch(error) {
-                res.status(500).send({message: "Internal Server Error"});
-            };
         });
 
-        app.post('/tuitions', verifyToken, async (req, res) => {
+        app.post('/tution', verifyToken, async (req, res) => {
             const result = await tutionsCollection.insertOne(req.body);
             res.send(result);
         });
 
-        app.patch('/tuitions/:id', verifyToken, async (req, res) => {
+        app.patch('/tution/:id', verifyToken, async (req, res) => {
             const updatedDoc = { $set: { 
                 subject: req.body.subject, class: req.body.class, 
                 salary: parseFloat(req.body.salary), location: req.body.location 
@@ -235,7 +234,7 @@ async function run() {
             res.send(result);
         });
 
-        app.delete('/tuitions/:id', verifyToken, async (req, res) => {
+        app.delete('/tution/:id', verifyToken, async (req, res) => {
             const result = await tutionsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
             res.send(result);
         });
@@ -257,6 +256,7 @@ async function run() {
         });
 
         console.log("🚀 Local Server Ready on Port 3000");
+
     } finally { }
 }
 run().catch(console.dir);
