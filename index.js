@@ -8,7 +8,15 @@ require('dotenv').config();
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
-app.use(cors());
+// app.use(cors());
+app.use(cors({
+    origin: [
+        "http://localhost:5173", // Your local Vite/React port
+        "https://your-frontend-domain.vercel.app" // YOUR ACTUAL VERCEL URL
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]
+}));
 app.use(express.json());
 
 // --- FIREBASE ADMIN SETUP ---
