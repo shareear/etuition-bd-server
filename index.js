@@ -101,14 +101,14 @@ async function run() {
                         const allPayments = await paymentsCollection.find().toArray();
                         const earnings = allPayments.reduce((sum, payment) => sum + parseFloat(payment.salary || 0), 0);
                         stats = { totalUsers, totalTuitions, earnings };
-                    } 
+                    }
                     else if (user?.role === 'tutor') {
                         const applications = await appicationsCollection.countDocuments({ tutorEmail: email });
                         const ongoingTuitions = await appicationsCollection.countDocuments({ tutorEmail: email, status: 'paid' });
                         const tutorPayments = await paymentsCollection.find({ tutorEmail: email }).toArray();
                         const totalEarnings = tutorPayments.reduce((sum, p) => sum + parseFloat(p.salary || 0), 0);
                         stats = { applications, ongoingTuitions, totalEarnings };
-                    } 
+                    }
                     else {
                         const tuitions = await tutionsCollection.countDocuments({ studentEmail: email });
                         const totalPaid = await paymentsCollection.countDocuments({ studentEmail: email });
@@ -184,11 +184,24 @@ async function run() {
         });
 
         // --- TUTOR ONGOING JOBS ---
+        // Add this to your server code to handle GET /applications
+        app.get('/applications', async (req, res) => {
+            const result = await appicationsCollection.find().toArray();
+            res.send(result);
+        });
+
         app.get('/tutor-ongoing/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
             if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
             const query = { tutorEmail: email, status: 'paid' };
             const result = await appicationsCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        // Add this near your other routes in the 'run' function
+        app.post('/applications', verifyToken, async (req, res) => {
+            const application = req.body;
+            const result = await appicationsCollection.insertOne(application);
             res.send(result);
         });
 
@@ -311,7 +324,7 @@ async function run() {
 
         app.get('/ongoing-tuitions/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
-            const role = req.query.role; 
+            const role = req.query.role;
             if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden' });
             let query = { status: 'paid' };
             if (role === 'tutor') {
@@ -327,7 +340,7 @@ async function run() {
             const totalUsers = await usersCollectin.countDocuments();
             const payments = await paymentsCollection.find().toArray();
             const totalVolume = payments.reduce((sum, p) => sum + parseFloat(p.salary || 0), 0);
-            const platformRevenue = totalVolume * 0.20; 
+            const platformRevenue = totalVolume * 0.20;
             res.send({ totalUsers, totalVolume, platformRevenue, payments });
         });
 
