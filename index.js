@@ -159,6 +159,37 @@ async function run() {
             res.send(result);
         });
 
+        //update user profile:
+        app.patch('/users/profile/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            const updatedData = req.body;
+
+            //Security check: Ensure the use is updating their own profile:
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'Forbidden access' });
+            };
+
+            const filter = { email: email };
+            const updateDoc = {
+                $set: {
+                    name: updatedData.name,
+                    phone: updatedData.phone,
+                    address: updatedData.address,
+                    institution: updatedData.institution,
+                    class: updatedData.class,
+                    gender: updatedData.gender,
+                    image: updatedData.image
+                }
+            };
+
+            try{
+                const result = await usersCollectin.updateOne(filter, updateDoc);
+                res.send(result);
+            }catch (error){
+                res.status(500).send({message: "Failed to update profile"});
+            }
+        });
+
         app.delete('/users/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
