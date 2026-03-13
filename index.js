@@ -55,6 +55,7 @@ async function run() {
         const usersCollectin = db.collection("users");
         const appicationsCollection = db.collection("applications");
         const paymentsCollection = db.collection("payments");
+        const feedBackCollection = db.collection("feedBack");
 
         // --- AUTH/JWT API ---
         app.post('/jwt', async (req, res) => {
@@ -422,6 +423,16 @@ async function run() {
             } catch (error) {
                 res.status(500).send({ message: "Failed to save payment" });
             }
+        });
+
+        //getting feedback api's:
+        app.get("/feedBack", async(req, res)=>{
+            const result = await feedBackCollection.find().toArray();
+            if(result.length > 0){
+                res.status(200).send(result);
+            }else{
+                res.status(400).send({message: "data not found"});
+            };
         });
 
         console.log("🚀 Server Ready");
